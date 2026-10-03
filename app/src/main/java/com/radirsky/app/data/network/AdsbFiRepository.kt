@@ -19,7 +19,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class AdsbLolRepository(private val httpClient: HttpClient) {
+class AdsbFiRepository(private val httpClient: HttpClient) {
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
@@ -30,7 +30,7 @@ class AdsbLolRepository(private val httpClient: HttpClient) {
     ): Lce<List<Aircraft>> = withContext(Dispatchers.IO) {
         val roundedLat = String.format(java.util.Locale.US, "%.3f", lat)
         val roundedLon = String.format(java.util.Locale.US, "%.3f", lon)
-        val url = "https://api.adsb.lol/v2/lat/$roundedLat/lon/$roundedLon/dist/$distanceNauticalMiles"
+        val url = "https://opendata.adsb.fi/api/v2/lat/$roundedLat/lon/$roundedLon/dist/$distanceNauticalMiles"
 
         return@withContext try {
             val response: HttpResponse = httpClient.get(url)
@@ -39,19 +39,19 @@ class AdsbLolRepository(private val httpClient: HttpClient) {
                 val retryHeader = response.headers["Retry-After"]?.toLongOrNull()
                     ?: response.headers["x-rate-limit-retry-after-seconds"]?.toLongOrNull()
                 return@withContext Lce.Error(
-                    message = "ADSB.lol rate limit (429). Failover active.",
+                    message = "adsb.fi rate limit (429)",
                     isRateLimit = true,
                     retryAfterSeconds = retryHeader
                 )
             }
 
             if (response.status != HttpStatusCode.OK) {
-                return@withContext Lce.Error("ADSB.lol API error: HTTP ${response.status.value}", isRateLimit = false)
+                return@withContext Lce.Error("adsb.fi HTTP ${response.status.value}", isRateLimit = false)
             }
 
             val bodyText = response.bodyAsText()
             val jsonObj = jsonParser.parseToJsonElement(bodyText).jsonObject
-            val acArray = jsonObj["ac"] as? JsonArray ?: return@withContext Lce.Content(emptyList())
+            val acArray = jsonObj["aircraft"] as? JsonArray ?: return@withContext Lce.Content(emptyList())
 
             val aircraftList = mutableListOf<Aircraft>()
 
@@ -60,42 +60,35 @@ class AdsbLolRepository(private val httpClient: HttpClient) {
 
                 try {
                     val acObj = element as? JsonObject ?: continue
-
                     val hex = acObj["hex"]?.asString() ?: continue
                     val flight = acObj["flight"]?.asString()?.trim()
-                    val aircraftLat = acObj["lat"]?.asDouble()
-                    val aircraftLon = acObj["lon"]?.asDouble()
+                    val aLat = acObj["lat"]?.asDouble()
+                    val aLon = acObj["lon"]?.asDouble()
 
-                    if (aircraftLat == null || aircraftLon == null || !aircraftLat.isFinite() || !aircraftLon.isFinite()) {
-                        continue
-                    }
+                    if (aLat == null || aLon == null || !aLat.isFinite() || !aLon.isFinite()) continue
 
                     val altBaroFeet = parseAltBaro(acObj["alt_baro"])
-                    val altMeters = altBaroFeet?.times(0.3048) // Convert feet to meters
-
+                    val altMeters = altBaroFeet?.times(0.3048)
                     val gsKnots = acObj["gs"]?.asDouble()
-                    val velocityMs = gsKnots?.times(0.514444) // Convert knots to m/s
-
+                    val velocityMs = gsKnots?.times(0.514444)
                     val trackHeading = acObj["track"]?.asDouble()
-
                     val baroRateFtMin = acObj["baro_rate"]?.asDouble()
-                    val verticalRateMs = baroRateFtMin?.times(0.00508) // Convert ft/min to m/s
-
+                    val verticalRateMs = baroRateFtMin?.times(0.00508)
                     val callsign = if (flight.isNullOrEmpty()) hex.uppercase() else flight
 
                     aircraftList.add(
                         Aircraft(
                             icao24 = hex,
                             callsign = callsign,
-                            originCountry = "ADSB.lol",
-                            longitude = aircraftLon,
-                            latitude = aircraftLat,
+                            originCountry = "adsb.fi",
+                            longitude = aLon,
+                            latitude = aLat,
                             barometricAltitude = altMeters,
                             velocity = velocityMs,
                             trueTrack = trackHeading,
                             verticalRate = verticalRateMs,
                             lastContact = System.currentTimeMillis() / 1000L,
-                            dataSource = "ADSB.LOL"
+                            dataSource = "ADSB.FI"
                         )
                     )
                 } catch (e: CancellationException) {
@@ -105,7 +98,6 @@ class AdsbLolRepository(private val httpClient: HttpClient) {
                 }
             }
 
-            // Hard limit: Sort by distance from center location and take at most 25 closest aircraft
             val closest25 = aircraftList
                 .sortedBy { ac ->
                     val aLat = ac.latitude ?: lat
@@ -120,7 +112,7 @@ class AdsbLolRepository(private val httpClient: HttpClient) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Lce.Error("ADSB.lol Connection Error: ${e.localizedMessage ?: "Failed to reach ADSB.lol"}")
+            Lce.Error("adsb.fi error: ${e.localizedMessage ?: "Failed to reach adsb.fi"}")
         }
     }
 

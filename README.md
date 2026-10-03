@@ -33,16 +33,17 @@
 
 **Radir-Sky** is an open-source native Android tactical flight radar app engineered specifically for compact displays, including the **Rabbit R1 hardware device (480x640 vertical resolution)**. Designed for 24/7 continuous desk-toy usage, it features a dark tactical military HUD interface with high-contrast `#FF5A36` accent range rings and custom `iA Writer Quattro` typography.
 
-Powered primarily by the open-source **ADSB.lol REST API** (with automatic failover to the **OpenSky Network REST API**), Radir-Sky tracks aircraft in real time within a 25 nautical mile (~46km) overhead radius.
+Powered by a resilient dual-provider architecture combining the open-source **ADSB.lol REST API** and **adsb.fi REST API** with automatic round-robin rotation and dynamic failover, Radir-Sky tracks aircraft in real time within a 25 nautical mile (~46km) overhead radius.
 
 ### 🌟 Key Highlights
 
 - ✈️ **Live ADS-B Flight Tracking**: Real-time position, altitude, ground speed, callsign, and heading tracking.
-- 🎯 **Smooth 60 FPS Dead-Reckoning Engine**: Continuous vector extrapolation and position interpolation for smooth target motion without visual snapping.
+- 🎯 **Smooth 60 FPS Dead-Reckoning Engine**: Continuous vector extrapolation with 60-second target retention and 2.0-second easing interpolation for fluid target motion between network cycles.
+- 🛡️ **Dual-Provider Rotation (12h+ Desk-Toy Mode)**: Alternates queries between ADSB.lol and adsb.fi on balanced 25-second intervals (~72 req/hr per provider), guaranteeing non-stop 12+ hour display operation without rate-limiting.
 - ⚡ **Optimized Performance & Culling**: Automatic proximity sorting (hard-capped to the 25 closest aircraft) combined with Canvas viewport culling to maintain ultra-fast frame rates.
 - 🎛️ **Physical Hardware Zoom**: Full hardware volume key integration (**Volume Up**: Zoom in down to 5km; **Volume Down**: Zoom out up to 150km).
 - 📍 **100% Open-Source Location Engine**: Built natively with AOSP `android.location.LocationManager` (GPS/Network) and an encrypted HTTPS IP Geolocation fallback (`freeipapi.com`).
-- 🌙 **24/7 Desk-Toy Display Mode**: Prevents screen autolock (`FLAG_KEEP_SCREEN_ON`) and runs in immersive full-screen mode with automatic error backoff handling.
+- 🌙 **24/7 Desk-Toy Display Mode**: Prevents screen autolock (`FLAG_KEEP_SCREEN_ON`) and runs in immersive full-screen mode.
 - 🔒 **Zero Proprietary SDKs**: 100% open-source stack with zero Google Play Services dependencies and zero telemetry.
 
 ---
@@ -70,7 +71,7 @@ Designed specifically for single-handed interaction on compact Android devices a
 - **UI Framework**: Jetpack Compose & Custom Compose Canvas (`TacticalRadarCanvas`)
 - **Networking**: Ktor Client (`cio` / `android` engine) with `kotlinx.serialization`
 - **Location Engine**: Native AOSP `LocationManager` + HTTPS IP Geolocation fallback (`freeipapi.com`)
-- **Data Providers**: ADSB.lol REST API (Primary) & OpenSky Network API (Fallback)
+- **Data Providers**: ADSB.lol REST API & adsb.fi REST API (Dual Round-Robin & Failover)
 
 ---
 
@@ -91,9 +92,9 @@ radir-sky/
 │   │   │   │   │   ├── Aircraft.kt           # ADS-B Aircraft Data Model
 │   │   │   │   │   └── Lce.kt                # Loading/Content/Error Sealed State Wrapper
 │   │   │   │   └── network/
-│   │   │   │       ├── AdsbLolRepository.kt  # Primary ADSB.lol REST API Client
-│   │   │   │       ├── OpenSkyRepository.kt  # Fallback OpenSky Network REST API Client
-│   │   │   │       └── FlightRadarRepository.kt # Composite Resilient Repository
+│   │   │   │       ├── AdsbLolRepository.kt  # ADSB.lol REST API Client
+│   │   │   │       ├── AdsbFiRepository.kt   # adsb.fi Open Data REST API Client
+│   │   │   │       └── FlightRadarRepository.kt # Dual-Provider Rotation & Failover Repository
 │   │   │   └── ui/
 │   │   │       ├── RadarViewModel.kt         # Live Polling & State Management ViewModel
 │   │   │       ├── components/
@@ -154,8 +155,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## 🔒 Security & Privacy Audit
 
 Prior to public release, this repository underwent a comprehensive dependency and security audit:
-- ✅ **No Private API Keys or Secrets**: Uses public open data endpoints (ADSB.lol & OpenSky Network).
-- ✅ **No Unencrypted Cleartext Traffic**: All network requests use secure HTTPS endpoints (`https://api.adsb.lol`, `https://opensky-network.org`, `https://freeipapi.com`).
+- ✅ **No Private API Keys or Secrets**: Uses public open data endpoints (ADSB.lol & adsb.fi).
+- ✅ **No Unencrypted Cleartext Traffic**: All network requests use secure HTTPS endpoints (`https://api.adsb.lol`, `https://opendata.adsb.fi`, `https://freeipapi.com`).
 - ✅ **Zero Telemetry**: No analytics, tracking, or remote logging SDKs are included.
 
 ---
@@ -164,7 +165,7 @@ Prior to public release, this repository underwent a comprehensive dependency an
 
 - **Source Code**: Released under the **[Apache License 2.0](LICENSE)**.
 - **Typography**: Features the **iA Writer Quattro** font family by Information Architects Inc. (based on IBM Plex Typeface), licensed under the **[SIL Open Font License 1.1](font/ia-writer-quattro/LICENSE)**.
-- **Flight Data**: Live flight telemetry provided by the open community projects **[ADSB.lol](https://adsb.lol)** and **[OpenSky Network](https://opensky-network.org)**.
+- **Flight Data**: Live flight telemetry provided by the open community projects **[ADSB.lol](https://adsb.lol)** and **[adsb.fi](https://adsb.fi)**.
 
 > [!IMPORTANT]
 > **Trademark Disclaimer**: *Rabbit R1 and Rabbit are trademarks of Rabbit Inc. Radir-Sky is an independent open-source software project developed by the community and is not affiliated with, endorsed by, or sponsored by Rabbit Inc.*

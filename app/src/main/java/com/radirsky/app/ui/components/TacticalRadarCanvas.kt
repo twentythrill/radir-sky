@@ -96,10 +96,13 @@ fun TacticalRadarCanvas(
     val interpolator = remember { AircraftInterpolator() }
     var interpolatedList by remember { mutableStateOf<List<InterpolatedAircraft>>(emptyList()) }
 
+    var lastKnownSource by remember { mutableStateOf("ADSB.LOL") }
+
     // Update targets when new API content arrives
     LaunchedEffect(uiState) {
         if (uiState is Lce.Content) {
             interpolator.updateTargets(uiState.data)
+            uiState.data.firstOrNull()?.dataSource?.let { lastKnownSource = it }
         }
     }
 
@@ -237,7 +240,7 @@ fun TacticalRadarCanvas(
                             )
                         )
                         Text(
-                            text = if (userLocation?.isGps == true) "SRC::ADSB.LOL [GPS]" else "SRC::ADSB.LOL [IP]",
+                            text = if (userLocation?.isGps == true) "SRC::$lastKnownSource [GPS]" else "SRC::$lastKnownSource [IP]",
                             style = TextStyle(
                                 fontFamily = IaWriterQuattro,
                                 fontSize = 9.sp,
@@ -313,7 +316,7 @@ fun TacticalRadarCanvas(
                     }
                     Row {
                         Text(
-                            text = "HDG: ${selectedAircraft.trueTrack?.toInt() ?: "---"}° | SRC: ADSB.lol",
+                            text = "HDG: ${selectedAircraft.trueTrack?.toInt() ?: "---"}° | SRC: ${selectedAircraft.dataSource}",
                             style = TextStyle(fontFamily = IaWriterQuattro, fontSize = 10.sp, color = TextSecondary)
                         )
                     }

@@ -10,5 +10,6 @@ data class Aircraft(
     val velocity: Double?,           // in m/s
     val trueTrack: Double?,          // in degrees heading
     val verticalRate: Double?,       // in m/s
-    val lastContact: Long? = null    // epoch seconds
+    val lastContact: Long? = null,   // epoch seconds
+    val dataSource: String = "ADSB.LOL"
 )

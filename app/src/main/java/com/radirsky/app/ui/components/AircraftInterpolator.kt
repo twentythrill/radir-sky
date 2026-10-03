@@ -20,16 +20,15 @@ class AircraftInterpolator {
         var targetLat: Double,
         var targetLon: Double,
         var animProgress: Float,
-        var aircraft: Aircraft
+        var aircraft: Aircraft,
+        var lastSeenEpochMs: Long = 0L
     )
 
     private val trackedMap = mutableMapOf<String, TrackedState>()
     private var lastUpdateNanos: Long = 0L
 
     fun updateTargets(newList: List<Aircraft>) {
-        val currentIds = newList.map { it.icao24 }.toSet()
-        // Remove aircraft that are no longer reported
-        trackedMap.keys.retainAll(currentIds)
+        val now = System.currentTimeMillis()
 
         for (newAircraft in newList) {
             val newLat = newAircraft.latitude ?: continue
@@ -46,18 +45,23 @@ class AircraftInterpolator {
                     targetLat = newLat,
                     targetLon = newLon,
                     animProgress = 1.0f,
-                    aircraft = newAircraft
+                    aircraft = newAircraft,
+                    lastSeenEpochMs = now
                 )
             } else {
-                // Smooth transition from current position to new position over 1 second
+                // Smooth transition from dead-reckoned position to newly reported position over 1.5s
                 existing.startLat = existing.currentLat
                 existing.startLon = existing.currentLon
                 existing.targetLat = newLat
                 existing.targetLon = newLon
                 existing.animProgress = 0.0f
                 existing.aircraft = newAircraft
+                existing.lastSeenEpochMs = now
             }
         }
+
+        // Retain targets seen within the last 60 seconds so blips stay smooth between 25s polling cycles
+        trackedMap.entries.removeAll { now - it.value.lastSeenEpochMs > 60_000L }
     }
 
     fun tick(frameTimeNanos: Long): List<InterpolatedAircraft> {
@@ -91,9 +95,9 @@ class AircraftInterpolator {
                 }
             }
 
-            // Smooth Interpolation from start to target over 1.0 second
+            // Smooth Interpolation from start to target over 2.0 seconds
             if (state.animProgress < 1.0f) {
-                state.animProgress = (state.animProgress + (dtSeconds / 1.0f).toFloat()).coerceAtMost(1.0f)
+                state.animProgress = (state.animProgress + (dtSeconds / 2.0f).toFloat()).coerceAtMost(1.0f)
                 val p = state.animProgress.toDouble()
                 state.currentLat = state.startLat + (state.targetLat - state.startLat) * p
                 state.currentLon = state.startLon + (state.targetLon - state.startLon) * p

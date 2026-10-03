@@ -11,6 +11,9 @@ import com.radirsky.app.data.network.FlightRadarRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,10 +22,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 class RadarViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        // Balanced 25-second polling interval (144 requests/hour total)
+        // With 50/50 dual-provider rotation: ~72 req/hour per provider (~1 req / 50s)
+        private const val POLLING_INTERVAL_MS = 25000L
+        // Initial 60-second backoff when throttled (prevents repeated hits during penalty window)
+        private const val BASE_BACKOFF_MS = 60000L
+        private const val MAX_BACKOFF_MS = 600000L // 10 minutes maximum backoff
+    }
 
     private val httpClient = HttpClient(Android) {
         install(ContentNegotiation) {
@@ -30,6 +43,12 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
                 ignoreUnknownKeys = true
                 isLenient = true
             })
+        }
+        defaultRequest {
+            header(
+                HttpHeaders.UserAgent,
+                "RadirSky-DeskToy/1.0 (Rabbit R1; Android; +https://github.com/twentythrill/radir-sky)"
+            )
         }
     }
 
@@ -57,6 +76,8 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
     val lastUpdateTime: StateFlow<Long> = _lastUpdateTime.asStateFlow()
 
     private var pollingJob: Job? = null
+    private val fetchMutex = Mutex()
+    private var consecutiveRateLimits = 0
 
     init {
         fetchLocation()
@@ -85,14 +106,20 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
 
         pollingJob = viewModelScope.launch(Dispatchers.IO) {
             while (true) {
-                val isBackoffNeeded = performFetch()
+                val result = performFetch()
 
-                if (isBackoffNeeded) {
-                    // HTTP 429 / Rate Limit: Pause loop for 30 seconds backoff
-                    delay(30000L)
+                if (result is Lce.Error && result.isRateLimit) {
+                    consecutiveRateLimits++
+                    val retryAfterMs = result.retryAfterSeconds?.times(1000L)
+                    val exponentialBackoffMs = (BASE_BACKOFF_MS * (1 shl (consecutiveRateLimits - 1).coerceAtMost(3)))
+                        .coerceAtMost(MAX_BACKOFF_MS)
+                    val backoffDelay = (retryAfterMs ?: exponentialBackoffMs).coerceAtMost(MAX_BACKOFF_MS)
+                    delay(backoffDelay)
                 } else {
-                    // Continuous 5-second polling for 24/7 desk-toy operation
-                    delay(5000L)
+                    if (result is Lce.Content) {
+                        consecutiveRateLimits = 0
+                    }
+                    delay(POLLING_INTERVAL_MS)
                 }
             }
         }
@@ -103,26 +130,33 @@ class RadarViewModel(application: Application) : AndroidViewModel(application) {
         pollingJob = null
     }
 
-    private suspend fun performFetch(): Boolean {
-        val loc = _userLocation.value ?: return false
-        val centerLat = loc.latitude + _panOffsetLatLon.value.first
-        val centerLon = loc.longitude + _panOffsetLatLon.value.second
-        val zoomRadius = _zoomRadiusKm.value.toDouble()
-
-        val result = repository.fetchAircraft(
-            lat = centerLat,
-            lon = centerLon,
-            radiusKm = zoomRadius
-        )
-
-        withContext(Dispatchers.Main) {
-            _uiState.value = result
-            if (result is Lce.Content) {
-                _lastUpdateTime.value = System.currentTimeMillis()
-            }
+    private suspend fun performFetch(): Lce<List<Aircraft>>? {
+        // Deduplicate overlapping fetches across lifecycle and location triggers
+        if (!fetchMutex.tryLock()) {
+            return null
         }
+        return try {
+            val loc = _userLocation.value ?: return null
+            val centerLat = loc.latitude + _panOffsetLatLon.value.first
+            val centerLon = loc.longitude + _panOffsetLatLon.value.second
+            val zoomRadius = _zoomRadiusKm.value.toDouble()
 
-        return (result is Lce.Error && result.isRateLimit)
+            val result = repository.fetchAircraft(
+                lat = centerLat,
+                lon = centerLon,
+                radiusKm = zoomRadius
+            )
+
+            withContext(Dispatchers.Main) {
+                _uiState.value = result
+                if (result is Lce.Content) {
+                    _lastUpdateTime.value = System.currentTimeMillis()
+                }
+            }
+            result
+        } finally {
+            fetchMutex.unlock()
+        }
     }
 
     fun zoomIn() {
